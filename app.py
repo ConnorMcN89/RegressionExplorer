@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.preprocessing import PolynomialFeatures, OneHotEncoder
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, train_test_split
 from sklearn.metrics import (
     mean_squared_error, r2_score, confusion_matrix,
     accuracy_score, recall_score, precision_score
@@ -771,21 +771,29 @@ if st.button("Fit classification model"):
             else:
                 class_model = LDA()
 
-            class_model.fit(X, y)
+            
+            # Split data into training and testing sets
 
-            # Calculate predicted classes and probabilities
-            class_predictions = class_model.predict(X)
-            class_probabilities = class_model.predict_proba(X)
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=1,
+                stratify=y
+            )
+
+            # Fit the model using training observations
+            class_model.fit(X_train, y_train)
+
+            # Predict using testing observations
+            class_predictions = class_model.predict(X_test)
+            class_probabilities = class_model.predict_proba(X_test)
 
             # Save results for display
             st.session_state["classification"] = {
                 "model": class_model,
-                "X": X,
-                "y": y,
+                "X": X_test,
+                "y": y_test,
                 "predictions": class_predictions,
                 "probabilities": class_probabilities
             }
-
 
 # Display classification results
 if "classification" in st.session_state:
