@@ -706,3 +706,8 @@ if st.button("Run 10-fold CV"):
 
             best_model = cv_table.loc[cv_table["CV MSE"].idxmin(), "Model"]
             st.write("Lowest CV MSE:", best_model)
+
+
+# Part 13: Classification Algorithms
+st.header("Classification Algorithms")
+st.write("Use Logistic Regression or LDA to predict a categorical response.")
