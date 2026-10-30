@@ -711,3 +711,30 @@ if st.button("Run 10-fold CV"):
 # Part 13: Classification Algorithms
 st.header("Classification Algorithms")
 st.write("Use Logistic Regression or LDA to predict a categorical response.")
+
+
+
+# Select classification algorithm
+classification_method = st.selectbox(
+    "Classification method",
+    ["Logistic Regression", "LDA"]
+)
+
+# Select the response variable
+class_response = st.selectbox(
+    "Classification response variable",
+    data.columns,
+    index=len(data.columns) - 1
+)
+
+# Select predictors, excluding the response
+class_candidates = [c for c in data.columns if c != class_response]
+
+class_predictors = st.multiselect(
+    "Classification predictors",
+    class_candidates
+)
+
+# Display selected variables
+st.write("Response:", class_response)
+st.write("Predictors:", class_predictors)
