@@ -818,9 +818,12 @@ if "classification" in st.session_state:
     st.write("First 10 predictions:")
     st.dataframe(prediction_table.head(10))
 
+    # Display model coefficients
+    st.write("Intercept:", model.intercept_)
+    st.write("Coefficients:", model.coef_)
     # Calculate accuracy
     accuracy = accuracy_score(y, predictions)
-    st.write("Accuracy:", round(accuracy, 4))
+    st.write("Test accuracy:", round(accuracy, 4))
     st.write("Error rate:", round(1 - accuracy, 4))
 
     # Confusion matrix
