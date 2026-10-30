@@ -737,4 +737,48 @@ class_predictors = st.multiselect(
 
 # Display selected variables
 st.write("Response:", class_response)
-st.write("Predictors:", class_predictors)
+st.write("Predictors:", ", ".join(class_predictors))
+
+
+
+# Fit the selected classification model
+if st.button("Fit classification model"):
+    if not class_predictors:
+        st.warning("Select at least one predictor.")
+    else:
+        # Remove observations with missing values
+        clean = data[[class_response] + class_predictors].dropna()
+
+        X = clean[class_predictors]
+        y = clean[class_response].astype(str)
+
+        # Check for numeric predictors
+        if not all(pd.api.types.is_numeric_dtype(X[c]) for c in X.columns):
+            st.error("Classification predictors must be numeric.")
+        elif y.nunique() < 2:
+            st.error("The response must have at least two categories.")
+        else:
+            # Select and fit the model
+            if classification_method == "Logistic Regression":
+                class_model = LogisticRegression(
+                    C=1e10, solver="lbfgs",
+                    max_iter=10000, tol=1e-10
+                )
+            else:
+                class_model = LDA()
+
+            class_model.fit(X, y)
+
+            # Calculate predicted classes and probabilities
+            class_predictions = class_model.predict(X)
+            class_probabilities = class_model.predict_proba(X)
+
+            # Save results for display
+            st.session_state["classification"] = {
+                "model": class_model,
+                "X": X,
+                "y": y,
+                "predictions": class_predictions,
+                "probabilities": class_probabilities
+            }
+
