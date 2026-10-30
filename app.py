@@ -14,7 +14,10 @@ from scipy import stats
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.preprocessing import PolynomialFeatures, OneHotEncoder
 from sklearn.model_selection import KFold
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import (
+    mean_squared_error, r2_score, confusion_matrix,
+    accuracy_score, recall_score, precision_score
+)
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 #set page settings
 st.set_page_config(page_title="Regression Explorer", layout="centered")
