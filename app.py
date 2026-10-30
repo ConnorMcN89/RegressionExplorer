@@ -783,3 +783,63 @@ if st.button("Fit classification model"):
                 "probabilities": class_probabilities
             }
 
+
+# Display classification results
+if "classification" in st.session_state:
+    result = st.session_state["classification"]
+
+    model = result["model"]
+    y = result["y"]
+    predictions = result["predictions"]
+    probabilities = result["probabilities"]
+
+    st.subheader("Classification Results")
+
+    # Display predicted classes and probabilities
+    prediction_table = pd.DataFrame({
+        "Actual": y.to_numpy(),
+        "Predicted": predictions
+    })
+
+    for i, label in enumerate(model.classes_):
+        prediction_table[f"Probability of {label}"] = probabilities[:, i]
+
+    st.write("First 10 predictions:")
+    st.dataframe(prediction_table.head(10))
+
+    # Calculate accuracy
+    accuracy = accuracy_score(y, predictions)
+    st.write("Accuracy:", round(accuracy, 4))
+    st.write("Error rate:", round(1 - accuracy, 4))
+
+    # Confusion matrix
+    cm = confusion_matrix(y, predictions, labels=model.classes_)
+
+    st.write("Confusion Matrix:")
+    st.dataframe(pd.DataFrame(
+        cm,
+        index=model.classes_,
+        columns=model.classes_
+    ))
+
+    # Additional metrics for binary classification
+    if len(model.classes_) == 2:
+        positive_class = model.classes_[1]
+
+        sensitivity = recall_score(
+            y, predictions, pos_label=positive_class
+        )
+
+        specificity = recall_score(
+            y, predictions, pos_label=model.classes_[0]
+        )
+
+        precision = precision_score(
+            y, predictions, pos_label=positive_class,
+            zero_division=0
+        )
+
+        st.write("Positive class:", positive_class)
+        st.write("Sensitivity:", round(sensitivity, 4))
+        st.write("Specificity:", round(specificity, 4))
+        st.write("Precision:", round(precision, 4))
