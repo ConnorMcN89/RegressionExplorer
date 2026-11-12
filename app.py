@@ -862,6 +862,6 @@ if "classification" in st.session_state:
     st.pyplot(fig)
     plt.close(fig)
 
-        st.write("Sensitivity:", round(sensitivity, 4))
-        st.write("Specificity:", round(specificity, 4))
-        st.write("Precision:", round(precision, 4))
+    st.write("Sensitivity:", round(sensitivity, 4))
+    st.write("Specificity:", round(specificity, 4))
+    st.write("Precision:", round(precision, 4))
