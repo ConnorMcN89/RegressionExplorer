@@ -19,6 +19,14 @@ from sklearn.metrics import (
     accuracy_score, recall_score, precision_score
 )
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+
+from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis as QDA
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import roc_curve, roc_auc_score
+
 #set page settings
 st.set_page_config(page_title="Regression Explorer", layout="centered")
 st.title("Regression Explorer")
@@ -712,145 +720,148 @@ if st.button("Run 10-fold CV"):
             st.write("Lowest CV MSE:", best_model)
 
 
+
 # Part 13: Classification Algorithms
 st.header("Classification Algorithms")
-st.write("Use Logistic Regression or LDA to predict a categorical response.")
+st.write("Use Logistic Regression, LDA, QDA, Gaussian NB, or KNN to predict a categorical response.")
 
-
-
-# Select classification algorithm
 classification_method = st.selectbox(
     "Classification method",
-    ["Logistic Regression", "LDA"]
+    ["Logistic Regression", "LDA", "QDA", "Gaussian NB", "KNN"]
 )
 
-# Select the response variable
 class_response = st.selectbox(
     "Classification response variable",
     data.columns,
     index=len(data.columns) - 1
 )
 
-# Select predictors, excluding the response
 class_candidates = [c for c in data.columns if c != class_response]
+class_predictors = st.multiselect("Classification predictors", class_candidates)
 
-class_predictors = st.multiselect(
-    "Classification predictors",
-    class_candidates
-)
-
-# Display selected variables
 st.write("Response:", class_response)
 st.write("Predictors:", ", ".join(class_predictors))
 
+if classification_method == "KNN":
+    selected_k = st.selectbox("Number of neighbors (K)", [1, 5, 25], index=2)
 
+classification_threshold = st.selectbox(
+    "Positive-class probability threshold", [0.50, 0.20, 0.10]
+)
 
-# Fit the selected classification model
 if st.button("Fit classification model"):
     if not class_predictors:
         st.warning("Select at least one predictor.")
     else:
-        # Remove observations with missing values
         clean = data[[class_response] + class_predictors].dropna()
-
         X = clean[class_predictors]
         y = clean[class_response].astype(str)
 
-        # Check for numeric predictors
         if not all(pd.api.types.is_numeric_dtype(X[c]) for c in X.columns):
             st.error("Classification predictors must be numeric.")
-        elif y.nunique() < 2:
-            st.error("The response must have at least two categories.")
+        elif y.nunique() != 2:
+            st.error("Select a response with exactly two categories.")
+        elif y.value_counts().min() < 2:
+            st.error("Each class needs at least two observations.")
         else:
-            # Select and fit the model
             if classification_method == "Logistic Regression":
                 class_model = LogisticRegression(
-                    C=1e10, solver="lbfgs",
-                    max_iter=10000, tol=1e-10
+                    C=1e10, solver="lbfgs", max_iter=10000, tol=1e-10
                 )
+            elif classification_method == "LDA":
+                class_model = LDA(store_covariance=True)
+            elif classification_method == "QDA":
+                class_model = QDA(store_covariance=True)
+            elif classification_method == "Gaussian NB":
+                class_model = GaussianNB()
             else:
-                class_model = LDA()
-
-            
-            # Split data into training and testing sets
+                class_model = make_pipeline(
+                    StandardScaler(), KNeighborsClassifier(n_neighbors=selected_k)
+                )
 
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=1,
-                stratify=y
+                X, y, test_size=0.2, random_state=1, stratify=y
             )
 
-            # Fit the model using training observations
             class_model.fit(X_train, y_train)
-
-            # Predict using testing observations
-            class_predictions = class_model.predict(X_test)
             class_probabilities = class_model.predict_proba(X_test)
 
-            # Save results for display
             st.session_state["classification"] = {
                 "model": class_model,
+                "method": classification_method,
                 "X": X_test,
                 "y": y_test,
-                "predictions": class_predictions,
-                "probabilities": class_probabilities
+                "probabilities": class_probabilities,
+                "threshold": classification_threshold
             }
 
-# Display classification results
 if "classification" in st.session_state:
     result = st.session_state["classification"]
-
     model = result["model"]
     y = result["y"]
-    predictions = result["predictions"]
     probabilities = result["probabilities"]
+    threshold = result["threshold"]
 
     st.subheader("Classification Results")
+    st.write("Method:", result["method"])
+    st.write("Threshold:", threshold)
 
-    # Display predicted classes and probabilities
+    positive_class = "Yes" if "Yes" in model.classes_ else model.classes_[1]
+    negative_class = [c for c in model.classes_ if c != positive_class][0]
+    positive_col = list(model.classes_).index(positive_class)
+    p_test = probabilities[:, positive_col]
+    class_predictions = np.where(p_test > threshold, positive_class, negative_class)
+
     prediction_table = pd.DataFrame({
         "Actual": y.to_numpy(),
-        "Predicted": predictions
+        "Predicted": class_predictions
     })
-
     for i, label in enumerate(model.classes_):
         prediction_table[f"Probability of {label}"] = probabilities[:, i]
-
     st.write("First 10 predictions:")
     st.dataframe(prediction_table.head(10))
 
-    # Calculate accuracy
-    accuracy = accuracy_score(y, predictions)
+    accuracy = accuracy_score(y, class_predictions)
     st.write("Test accuracy:", round(accuracy, 4))
     st.write("Error rate:", round(1 - accuracy, 4))
 
-    # Confusion matrix
-    cm = confusion_matrix(y, predictions, labels=model.classes_)
-
+    cm = confusion_matrix(y, class_predictions, labels=[negative_class, positive_class])
+    tn, fp, fn, tp = cm.ravel()
     st.write("Confusion Matrix:")
     st.dataframe(pd.DataFrame(
         cm,
-        index=model.classes_,
-        columns=model.classes_
+        index=[f"Actual {negative_class}", f"Actual {positive_class}"],
+        columns=[f"Predicted {negative_class}", f"Predicted {positive_class}"]
     ))
 
-    # Additional metrics for binary classification
-    if len(model.classes_) == 2:
-        positive_class = model.classes_[1]
+    sensitivity = recall_score(y, class_predictions, pos_label=positive_class)
+    specificity = recall_score(y, class_predictions, pos_label=negative_class)
+    precision = precision_score(
+        y, class_predictions, pos_label=positive_class, zero_division=0
+    )
+    fpr = fp / (fp + tn)
 
-        sensitivity = recall_score(
-            y, predictions, pos_label=positive_class
-        )
+    st.write("Positive class:", positive_class)
+    st.write("Sensitivity:", round(sensitivity, 4))
+    st.write("Specificity:", round(specificity, 4))
+    st.write("Precision:", round(precision, 4))
+    st.write("False positive rate:", round(fpr, 4))
+    st.write("TN, FP, FN, TP:", tn, fp, fn, tp)
 
-        specificity = recall_score(
-            y, predictions, pos_label=model.classes_[0]
-        )
+    roc_fpr, roc_tpr, roc_thresholds = roc_curve(y == positive_class, p_test)
+    auc = roc_auc_score(y == positive_class, p_test)
+    st.write("Test AUC:", round(auc, 4))
 
-        precision = precision_score(
-            y, predictions, pos_label=positive_class,
-            zero_division=0
-        )
+    fig, ax = plt.subplots()
+    ax.plot(roc_fpr, roc_tpr, label=f"{result['method']}: {auc:.3f}")
+    ax.plot([0, 1], [0, 1], "--", color="gray")
+    ax.set_xlabel("False positive rate")
+    ax.set_ylabel("Sensitivity")
+    ax.set_title("Classification ROC Curve")
+    ax.legend()
+    st.pyplot(fig)
+    plt.close(fig)
 
-        st.write("Positive class:", positive_class)
         st.write("Sensitivity:", round(sensitivity, 4))
         st.write("Specificity:", round(specificity, 4))
         st.write("Precision:", round(precision, 4))
