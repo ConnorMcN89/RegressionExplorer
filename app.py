@@ -865,3 +865,606 @@ if "classification" in st.session_state:
     st.write("Sensitivity:", round(sensitivity, 4))
     st.write("Specificity:", round(specificity, 4))
     st.write("Precision:", round(precision, 4))
+
+
+
+
+# Part 14: Feature Selection and Regularization
+
+from itertools import combinations
+from sklearn.linear_model import Ridge, Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import mean_absolute_error
+
+st.header("Feature Selection and Regularization")
+
+fs_response = st.selectbox(
+    "Feature selection response",
+    data.select_dtypes(include=np.number).columns,
+    index=list(data.select_dtypes(include=np.number).columns).index("Salary")
+    if "Salary" in data.select_dtypes(include=np.number).columns else 0
+)
+
+fs_candidates = [c for c in data.columns if c != fs_response]
+
+fs_predictors = st.multiselect(
+    "Candidate predictors",
+    fs_candidates,
+    default=fs_candidates if fs_response == "Salary" else []
+)
+
+fs_seed = st.number_input(
+    "Random state", min_value=0, value=6
+)
+
+fs_subset_limit = st.slider(
+    "Maximum predictors for best subset", 1, 10, 8
+)
+
+fs_ridge_min, fs_ridge_max = st.slider(
+    "Ridge alpha powers of 10", -4.0, 5.0, (-3.0, 4.0)
+)
+
+fs_lasso_min, fs_lasso_max = st.slider(
+    "Lasso alpha powers of 10", -4.0, 5.0, (-2.0, 2.7)
+)
+
+fs_grid_size = st.slider(
+    "Number of penalty values", 10, 60, 36
+)
+
+fs_max_components = st.number_input(
+    "Maximum number of components", min_value=1, value=19
+)
+
+if st.button("Run Feature Selection"):
+
+    if not fs_predictors:
+        st.warning("Select at least one predictor.")
+
+    else:
+        clean = data[[fs_response] + fs_predictors].copy()
+
+        missing_response = clean[fs_response].isna().sum()
+        clean = clean.dropna(subset=[fs_response])
+
+        # Encode categorical predictors
+        X = pd.get_dummies(
+            clean[fs_predictors], drop_first=True, dtype=int
+        )
+        X = X.replace([np.inf, -np.inf], np.nan)
+
+        valid = X.notna().all(axis=1)
+        X = X.loc[valid].astype(float)
+        y = clean.loc[valid, fs_response]
+
+        st.write("Missing responses removed:", missing_response)
+        st.write("Rows used:", len(y))
+        st.write("Encoded predictors:", X.columns.tolist())
+
+        if len(y) < 30 or X.shape[1] == 0:
+            st.error("At least 30 complete rows and one predictor are required.")
+
+        else:
+            Xdev, Xtest, ydev, ytest = train_test_split(
+                X, y, test_size=0.20, random_state=int(fs_seed)
+            )
+
+            Xtr, Xval, ytr, yval = train_test_split(
+                Xdev, ydev, test_size=0.25, random_state=int(fs_seed)
+            )
+
+            st.write(
+                "Training, validation, test:",
+                len(ytr), len(yval), len(ytest)
+            )
+
+            results = []
+            fitted = {}
+            paths = {}
+
+            mean_pred = np.repeat(ytr.mean(), len(yval))
+
+            results.append((
+                "Mean only", 0,
+                mean_squared_error(yval, mean_pred)
+            ))
+
+            ols = LinearRegression().fit(Xtr, ytr)
+            ols_val = ols.predict(Xval)
+
+            results.append((
+                "Full OLS", Xtr.shape[1],
+                mean_squared_error(yval, ols_val)
+            ))
+
+            fitted["Full OLS"] = (
+                ols, Xtr.columns.tolist()
+            )
+
+            st.subheader("Full OLS Baseline")
+            st.write(
+                "OLS training MSE:",
+                mean_squared_error(ytr, ols.predict(Xtr))
+            )
+            st.write(
+                "OLS validation MSE:",
+                mean_squared_error(yval, ols_val)
+            )
+
+            # Best subset selection
+            st.subheader("Best Subset Selection")
+
+            default_pool = [
+                "AtBat", "Hits", "HmRun", "Walks",
+                "Years", "CHits", "PutOuts", "Division_W"
+            ]
+
+            available = Xtr.columns.tolist()
+            pool = [c for c in default_pool if c in available]
+
+            if not pool:
+                pool = available[:fs_subset_limit]
+
+            pool = pool[:fs_subset_limit]
+
+            st.write("Best subset candidates searched:", pool)
+            st.write("Nonempty subsets searched:", 2 ** len(pool) - 1)
+
+            subset_rows = []
+
+            for k in range(1, len(pool) + 1):
+                best_rss = np.inf
+
+                for combo in combinations(pool, k):
+                    cols = list(combo)
+                    model = LinearRegression().fit(Xtr[cols], ytr)
+                    rss = np.sum(
+                        (ytr - model.predict(Xtr[cols])) ** 2
+                    )
+
+                    if rss < best_rss:
+                        best_rss = rss
+                        best_cols = cols
+                        best_model = model
+
+                val_mse = mean_squared_error(
+                    yval, best_model.predict(Xval[best_cols])
+                )
+
+                subset_rows.append((
+                    k, best_cols, best_rss, val_mse, best_model
+                ))
+
+            subset_table = pd.DataFrame(
+                subset_rows,
+                columns=[
+                    "k", "Predictors", "Train RSS",
+                    "Validation MSE", "Model"
+                ]
+            )
+
+            st.dataframe(subset_table.drop(columns="Model"))
+
+            best = subset_table.loc[
+                subset_table["Validation MSE"].idxmin()
+            ]
+
+            results.append((
+                "Best subset", best["k"], best["Validation MSE"]
+            ))
+
+            fitted["Best subset"] = (
+                best["Model"], best["Predictors"]
+            )
+
+            st.write("Selected predictors:", best["Predictors"])
+
+            # Forward and backward selection
+            st.subheader("Forward and Backward Selection")
+
+            for method in ["Forward", "Backward"]:
+                current = (
+                    [] if method == "Forward"
+                    else Xtr.columns.tolist()
+                )
+
+                rows = []
+
+                for step in range(Xtr.shape[1]):
+
+                    if method == "Forward":
+                        options = [
+                            current + [v]
+                            for v in Xtr if v not in current
+                        ]
+
+                    elif step == 0:
+                        options = [current]
+
+                    else:
+                        options = [
+                            [v for v in current if v != drop]
+                            for drop in current
+                        ]
+
+                    if not options or not options[0]:
+                        break
+
+                    best_rss = np.inf
+
+                    for cols in options:
+                        model = LinearRegression().fit(
+                            Xtr[cols], ytr
+                        )
+
+                        rss = np.sum(
+                            (ytr - model.predict(Xtr[cols])) ** 2
+                        )
+
+                        if rss < best_rss:
+                            best_rss = rss
+                            chosen = cols
+                            best_model = model
+
+                    current = chosen
+
+                    mse = mean_squared_error(
+                        yval,
+                        best_model.predict(Xval[current])
+                    )
+
+                    rows.append((
+                        len(current), current,
+                        best_rss, mse, best_model
+                    ))
+
+                path = pd.DataFrame(
+                    rows, columns=subset_table.columns
+                ).sort_values("k")
+
+                paths[method] = path
+
+                best = path.loc[
+                    path["Validation MSE"].idxmin()
+                ]
+
+                results.append((
+                    method, best["k"], best["Validation MSE"]
+                ))
+
+                fitted[method] = (
+                    best["Model"], best["Predictors"]
+                )
+
+                st.write(method, "selected predictors:", best["Predictors"])
+                st.dataframe(path.drop(columns="Model"))
+
+            fig, ax = plt.subplots()
+
+            for label, path in {
+                "Best subset": subset_table,
+                **paths
+            }.items():
+                ax.plot(
+                    path["k"], path["Validation MSE"],
+                    marker="o", label=label
+                )
+
+            ax.axhline(
+                results[0][2],
+                color="gray", linestyle="--",
+                label="Mean only"
+            )
+
+            ax.set_xlabel("Number of predictors")
+            ax.set_ylabel("Validation MSE")
+            ax.legend()
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # Ridge regression
+            st.subheader("Ridge Regression")
+
+            ridge_grid = np.logspace(
+                fs_ridge_min, fs_ridge_max, fs_grid_size
+            )
+
+            ridge_models, ridge_errors, ridge_coef = [], [], []
+
+            for a in ridge_grid:
+                model = make_pipeline(
+                    StandardScaler(), Ridge(alpha=a)
+                )
+
+                model.fit(Xtr, ytr)
+
+                ridge_models.append(model)
+                ridge_errors.append(
+                    mean_squared_error(yval, model.predict(Xval))
+                )
+                ridge_coef.append(
+                    model.named_steps["ridge"].coef_
+                )
+
+            j = np.argmin(ridge_errors)
+
+            results.append((
+                "Ridge", ridge_grid[j], ridge_errors[j]
+            ))
+
+            fitted["Ridge"] = (
+                ridge_models[j], Xtr.columns.tolist()
+            )
+
+            st.write("Selected alpha:", ridge_grid[j])
+            st.write("Validation MSE:", ridge_errors[j])
+
+            fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+
+            ax[0].semilogx(ridge_grid, ridge_coef)
+            ax[0].set(
+                xlabel="Ridge alpha",
+                ylabel="Standardized coefficients"
+            )
+
+            ax[1].semilogx(ridge_grid, ridge_errors)
+            ax[1].axvline(
+                ridge_grid[j], color="gray", linestyle="--"
+            )
+            ax[1].set(
+                xlabel="Ridge alpha",
+                ylabel="Validation MSE"
+            )
+
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # Lasso regression
+            st.subheader("Lasso Regression")
+
+            lasso_grid = np.logspace(
+                fs_lasso_min, fs_lasso_max, fs_grid_size
+            )
+
+            lasso_models, lasso_errors, lasso_coef = [], [], []
+
+            for a in lasso_grid:
+                model = make_pipeline(
+                    StandardScaler(),
+                    Lasso(alpha=a, max_iter=50000, tol=1e-5)
+                )
+
+                model.fit(Xtr, ytr)
+
+                lasso_models.append(model)
+                lasso_errors.append(
+                    mean_squared_error(yval, model.predict(Xval))
+                )
+                lasso_coef.append(
+                    model.named_steps["lasso"].coef_
+                )
+
+            j = np.argmin(lasso_errors)
+
+            results.append((
+                "Lasso", lasso_grid[j], lasso_errors[j]
+            ))
+
+            fitted["Lasso"] = (
+                lasso_models[j], Xtr.columns.tolist()
+            )
+
+            coef = pd.Series(
+                lasso_coef[j], index=Xtr.columns
+            )
+
+            st.write("Selected alpha:", lasso_grid[j])
+            st.write("Validation MSE:", lasso_errors[j])
+            st.write("Retained predictors:")
+            st.dataframe(
+                coef[coef != 0].rename("Coefficient")
+            )
+
+            fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+
+            ax[0].semilogx(lasso_grid, lasso_coef)
+            ax[0].set(
+                xlabel="Lasso alpha",
+                ylabel="Standardized coefficients"
+            )
+
+            ax[1].semilogx(lasso_grid, lasso_errors)
+            ax[1].axvline(
+                lasso_grid[j], color="gray", linestyle="--"
+            )
+            ax[1].set(
+                xlabel="Lasso alpha",
+                ylabel="Validation MSE"
+            )
+
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # PCR and PLS
+            st.subheader("PCR and PLS")
+
+            max_components = min(
+                int(fs_max_components),
+                Xtr.shape[1],
+                len(Xtr) - 1
+            )
+
+            component_counts = range(
+                1, max_components + 1
+            )
+
+            st.write("Component counts tested:", 1, "to", max_components)
+
+            pcr_models, pcr_errors = [], []
+            pls_models, pls_errors = [], []
+
+            for m in component_counts:
+                model = make_pipeline(
+                    StandardScaler(),
+                    PCA(n_components=m),
+                    LinearRegression()
+                )
+
+                model.fit(Xtr, ytr)
+
+                pcr_models.append(model)
+                pcr_errors.append(
+                    mean_squared_error(yval, model.predict(Xval))
+                )
+
+                pls = PLSRegression(
+                    n_components=m, scale=True
+                ).fit(Xtr, ytr)
+
+                pls_models.append(pls)
+
+                pred = pls.predict(Xval).ravel()
+
+                pls_errors.append(
+                    mean_squared_error(yval, pred)
+                )
+
+            j = np.argmin(pcr_errors)
+            m = component_counts[j]
+
+            results.append(("PCR", m, pcr_errors[j]))
+            fitted["PCR"] = (
+                pcr_models[j], Xtr.columns.tolist()
+            )
+
+            pca = pcr_models[j].named_steps["pca"]
+
+            st.write("PCR selected components:", m)
+            st.write("PCR validation MSE:", pcr_errors[j])
+            st.write(
+                "Predictor variance retained:",
+                pca.explained_variance_ratio_.sum()
+            )
+
+            st.write("PCR first component weights:")
+            st.dataframe(
+                pd.Series(
+                    pca.components_[0],
+                    index=Xtr.columns,
+                    name="Weight"
+                ).to_frame()
+            )
+
+            j = np.argmin(pls_errors)
+            m = component_counts[j]
+
+            results.append(("PLS", m, pls_errors[j]))
+            fitted["PLS"] = (
+                pls_models[j], Xtr.columns.tolist()
+            )
+
+            st.write("PLS selected components:", m)
+            st.write("PLS validation MSE:", pls_errors[j])
+
+            st.write("PLS first component weights:")
+            st.dataframe(
+                pd.Series(
+                    pls_models[j].x_weights_[:, 0],
+                    index=Xtr.columns,
+                    name="Weight"
+                ).to_frame()
+            )
+
+            fig, ax = plt.subplots()
+
+            ax.plot(
+                component_counts, pcr_errors,
+                "o-", label="PCR"
+            )
+
+            ax.plot(
+                component_counts, pls_errors,
+                "s-", label="PLS"
+            )
+
+            ax.set_xlabel("Number of components")
+            ax.set_ylabel("Validation MSE")
+            ax.legend()
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # Final comparison
+            st.subheader("Model Comparison")
+
+            comparison = pd.DataFrame(
+                results,
+                columns=[
+                    "Method", "Setting", "Validation MSE"
+                ]
+            )
+
+            comparison["Validation RMSE"] = np.sqrt(
+                comparison["Validation MSE"]
+            )
+
+            comparison = comparison.sort_values(
+                "Validation MSE", kind="stable"
+            )
+
+            st.dataframe(comparison)
+
+            winner = comparison.iloc[0]["Method"]
+
+            if winner == "Mean only":
+                test_pred = np.repeat(
+                    ytr.mean(), len(ytest)
+                )
+            else:
+                model, cols = fitted[winner]
+                test_pred = np.asarray(
+                    model.predict(Xtest[cols])
+                ).ravel()
+
+            st.write("Selected method:", winner)
+
+            st.write(
+                "Test RMSE:",
+                np.sqrt(mean_squared_error(ytest, test_pred))
+            )
+
+            st.write(
+                "Test MAE:",
+                mean_absolute_error(ytest, test_pred)
+            )
+
+            st.write(
+                "Test R-squared:",
+                r2_score(ytest, test_pred)
+            )
+
+            fig, ax = plt.subplots()
+
+            ax.scatter(ytest, test_pred, alpha=0.75)
+
+            lo = min(ytest.min(), test_pred.min())
+            hi = max(ytest.max(), test_pred.max())
+
+            ax.plot(
+                [lo, hi], [lo, hi],
+                "--", color="gray"
+            )
+
+            ax.set_xlabel("Observed response")
+            ax.set_ylabel("Predicted response")
+
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
